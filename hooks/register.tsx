@@ -1,19 +1,16 @@
-import { atom, read, update } from 'claude-code'
 import type { EngineInterface as E, Register } from 'claude-code'
 
-import type { Mood, Prefs, Status } from '../types'
-
+type Mood = 'sleeping' | 'working' | 'waiting' | 'done' | 'stopped'
+type Prefs = { isHidden: boolean; isMuted: boolean; name: string }
 type Call = { tool: string } & Record<string, unknown>
 
-const status = atom({ plugin: 'cloud-pet', key: 'status' } as const, { mood: 'sleeping', detail: 'Send a prompt to wake me up', changedAt: 0 })
-const prefs = atom({ plugin: 'cloud-pet', key: 'prefs' } as const, { isHidden: false, isMuted: false, name: 'Cloud' })
 const LINE: Record<Mood, string> = { sleeping: 'Napping', working: 'Working', waiting: 'Needs you', done: 'All done', stopped: 'Stopped' }
 const calls = new Map<string, { owner: string; tool: string; isAsked?: boolean }>()
 const waiting = new Map<string, string>()
 let main: { mood: Mood; detail: string } = { mood: 'sleeping', detail: 'Send a prompt to wake me up' }
+let prefs: Prefs = { isHidden: false, isMuted: false, name: 'Cloud' }
 let changedAt = 0
 let shown = ''
-const FACE: Record<Mood, string> = { sleeping: '(=-.-=) zZ', working: '(=•ω•=)…', waiting: '(=O.O=) !', done: '(=^ω^=) ✓', stopped: '(=;.;=)' }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -22,7 +19,6 @@ export const register: Register = on => {
     if ((await readFile($, 'pet.html')) !== page()) await writeFile($, 'pet.html', page())
     await publish($)
     await launch($)
-    $.clock.every(3_000, () => void setPrefs($, {}, false))
     $.clock.every(60_000, () => void publish($))
     return next(e)
   })
@@ -90,7 +86,7 @@ export const register: Register = on => {
     await setPrefs($, {}, false)
     const [verb = '', ...rest] = e.args.trim().split(/\s+/)
     const changes = new Map<string, Partial<Prefs>>([
-      ['', { isHidden: !(await read($, prefs)).isHidden }],
+      ['', { isHidden: !prefs.isHidden }],
       ['show', { isHidden: false }],
       ['hide', { isHidden: true }],
       ['mute', { isMuted: true }],
@@ -101,28 +97,7 @@ export const register: Register = on => {
     if (!change) return { text: 'Usage: /pet [show|hide|mute|unmute|name <name>]' }
     await setPrefs($, change)
     if (change.isHidden === false) await launch($)
-    const now = await read($, prefs)
-    return { text: `${now.name} is ${now.isHidden ? 'hidden, /pet brings it back' : 'out'}. Notifications are ${now.isMuted ? 'muted' : 'on'}.` }
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const { name, isHidden } = await read($, prefs)
-    if (isHidden || e.props.hasSurvey) return next(e)
-    const { mood, detail } = await read($, status)
-    const ui = $.ui.resolve(e)
-    const { Box, Text, Button } = ui
-    const hide = () => void setPrefs($, { isHidden: true }).then(() => $.ui.toast(`${name} is hidden. /pet brings it back.`))
-    return (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {'Svg' in ui ? <ui.Svg source={svg(mood)} alt={`${name}: ${LINE[mood]}`} width={24} height={24} isInteractive /> : <Text>{FACE[mood]}</Text>}
-        <Text size="footnote" bold>{name}</Text>
-        <Text size="footnote">· {LINE[mood]}</Text>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text size="footnote" dimColor wrap="truncate-end">· {detail}</Text>
-        </Box>
-        <Button key="hide" plain dimColor label="Hide" onPress={hide} />
-      </Box>
-    )
+    return { text: `${prefs.name} is ${prefs.isHidden ? 'hidden, /pet brings it back' : 'out'}. Notifications are ${prefs.isMuted ? 'muted' : 'on'}.` }
   })
 }
 
@@ -131,16 +106,15 @@ const readFile = async ($: E, name: string) => $.fs.read(`${await dir($)}/${name
 const writeFile = async ($: E, name: string, text: string) => $.fs.write(`${await dir($)}/${name}`, text).catch(() => undefined)
 const project = async ($: E) => (await $.session.cwd()).split('/').pop()
 
-function current(): Status {
+function current(): { mood: Mood; detail: string } {
   const wait = [...waiting.values()].pop()
-  return wait ? { mood: 'waiting', detail: wait, changedAt } : { ...main, changedAt }
+  return wait ? { mood: 'waiting', detail: wait } : main
 }
 
 async function setStatus($: E, change?: typeof main) {
   if (change) main = change
   const { mood, detail } = current()
   if (`${mood}|${detail}` !== shown) [shown, changedAt] = [`${mood}|${detail}`, Date.now()]
-  await update($, status, current)
   await publish($)
 }
 
@@ -153,17 +127,15 @@ async function publish($: E, ended?: 'ended') {
 }
 
 async function setPrefs($: E, change: Partial<Prefs>, isSaved = true) {
-  const now = await read($, prefs)
   const saved = await readFile($, 'prefs.json').then(text => JSON.parse(text ?? '{}')).catch(() => ({}))
-  const next = { ...now, ...saved, ...change }
-  if (JSON.stringify(next) !== JSON.stringify(now)) await update($, prefs, () => next)
-  if (isSaved) await writeFile($, 'prefs.json', JSON.stringify(next))
+  prefs = { ...prefs, ...saved, ...change }
+  if (isSaved) await writeFile($, 'prefs.json', JSON.stringify(prefs))
 }
 
 async function notify($: E, what: string, body: string) {
-  const { name, isMuted } = await read($, prefs)
+  await setPrefs($, {}, false)
   const script = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"\nend run'
-  if (!isMuted) await $.process.run(['osascript', '-e', script, '--', `${name} ${what} · ${await project($)}`, body]).catch(() => undefined)
+  if (!prefs.isMuted) await $.process.run(['osascript', '-e', script, '--', `${prefs.name} ${what} · ${await project($)}`, body]).catch(() => undefined)
 }
 
 async function launch($: E) {

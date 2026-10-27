@@ -146,8 +146,7 @@ final class Cloud: NSObject, NSApplicationDelegate, WKNavigationDelegate {
   }
 
   func layout() {
-    let mood = state["mood"] as? String
-    let open = !isDragging && (isHovering || mood != "sleeping")
+    let open = !isDragging && isHovering
     let side = anchor.x + size.width - wide < screen(at: anchor).minX ? "right" : "left"
     var frame = NSRect(origin: anchor, size: size)
     if open {

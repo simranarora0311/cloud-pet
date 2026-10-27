@@ -2,9 +2,8 @@
 
 A pet for Claude Code that floats above your apps, shows what Claude is doing, and tells you when it is done or needs you.
 
-- Floats on every desktop and over full-screen apps. Drag it anywhere, click it to open Claude, right-click it to mute or hide it.
+- Floats on every desktop and over full-screen apps. Hover over it to see what Claude is doing, drag it anywhere, click it to open Claude, right-click it to mute or hide it.
 - Keeps a finished session marked done until you click it or switch to Claude.
-- Sits in a small strip above the prompt too.
 - Sends a macOS notification when Claude finishes, asks you a question, or needs your permission.
 
 ## Install
