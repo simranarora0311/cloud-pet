@@ -1,36 +1,25 @@
 import type { EngineInterface as E, Register } from 'claude-code'
 
 type Mood = 'sleeping' | 'working' | 'waiting' | 'done' | 'stopped'
-type Prefs = { isHidden: boolean; isMuted: boolean; name: string }
+type Prefs = { isHidden: boolean; name: string }
 type Call = { tool: string } & Record<string, unknown>
 
 const LINE: Record<Mood, string> = { sleeping: 'Napping', working: 'Working', waiting: 'Needs you', done: 'All done', stopped: 'Stopped' }
 const calls = new Map<string, { owner: string; tool: string; isAsked?: boolean }>()
 const waiting = new Map<string, string>()
 let main: { mood: Mood; detail: string } = { mood: 'sleeping', detail: 'Send a prompt to wake me up' }
-let prefs: Prefs = { isHidden: false, isMuted: false, name: 'Cloud' }
+let prefs: Prefs = { isHidden: false, name: 'Cloud' }
 let changedAt = 0
 let shown = ''
-let title = ''
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'pet', description: 'Show or hide Cloud, mute its notifications, or rename it', argumentHint: '[show|hide|mute|unmute|name <name>]', immediate: true })
+    await $.command.register({ name: 'pet', description: 'Show or hide Cloud, or rename it', argumentHint: '[show|hide|name <name>]', immediate: true })
     await setPrefs($, {}, false)
     if ((await readFile($, 'pet.html')) !== page()) await writeFile($, 'pet.html', page())
     await publish($)
     await launch($)
     $.clock.every(60_000, () => void publish($))
-    return next(e)
-  })
-
-  on('classic.SessionStart', async ($, e, next) => {
-    title = e.session_title ?? (e.source === 'clear' ? '' : title)
-    return next(e)
-  })
-
-  on('classic.UserPromptSubmit', async ($, e, next) => {
-    title = e.session_title ?? title
     return next(e)
   })
 
@@ -50,7 +39,6 @@ export const register: Register = on => {
     calls.set(e.tool_use_id, { owner: e.agentId ?? '', tool: call.tool })
     if (isQuestion) waiting.set(e.tool_use_id, 'Has a question for you')
     await setStatus($, e.agentId || isQuestion ? undefined : { mood: 'working', detail: activity(call) })
-    if (isQuestion) await notify($, 'has a question for you', 'Claude is waiting on your answer.')
     try {
       return await next(e)
     } finally {
@@ -75,21 +63,13 @@ export const register: Register = on => {
       waiting.set(id, `Wants to use ${label(e.tool_name)}`)
     }
     await setStatus($)
-    await notify($, 'needs your OK', `Claude wants to use ${label(e.tool_name)}.`)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) return next(e)
-    const time = took(e.durationMs)
-    if (e.reason === 'answer') {
-      await setStatus($, { mood: 'done', detail: `Finished in ${time}` })
-      await notify($, 'is done', [time, summary(e.answer)].filter(Boolean).join(': '))
-    } else {
-      const why = e.reason === 'aborted' ? 'You interrupted the turn' : e.reason === 'refusal' ? 'The model declined to continue' : 'The turn ended on an error'
-      await setStatus($, { mood: 'stopped', detail: why })
-      if (e.reason !== 'aborted') await notify($, 'stopped', `${why}.`)
-    }
+    const why = e.reason === 'aborted' ? 'You interrupted the turn' : e.reason === 'refusal' ? 'The model declined to continue' : 'The turn ended on an error'
+    await setStatus($, e.reason === 'answer' ? { mood: 'done', detail: `Finished in ${took(e.durationMs)}` } : { mood: 'stopped', detail: why })
     return next(e)
   })
 
@@ -100,22 +80,20 @@ export const register: Register = on => {
       ['', { isHidden: !prefs.isHidden }],
       ['show', { isHidden: false }],
       ['hide', { isHidden: true }],
-      ['mute', { isMuted: true }],
-      ['unmute', { isMuted: false }],
     ])
     if (rest.length) changes.set('name', { name: rest.join(' ').slice(0, 24) })
     const change = changes.get(verb.toLowerCase())
-    if (!change) return { text: 'Usage: /pet [show|hide|mute|unmute|name <name>]' }
+    if (!change) return { text: 'Usage: /pet [show|hide|name <name>]' }
     await setPrefs($, change)
     if (change.isHidden === false) await launch($)
-    return { text: `${prefs.name} is ${prefs.isHidden ? 'hidden, /pet brings it back' : 'out'}. Notifications are ${prefs.isMuted ? 'muted' : 'on'}.` }
+    return { text: `${prefs.name} is ${prefs.isHidden ? 'hidden, /pet brings it back' : 'out'}.` }
   })
 }
 
 const dir = async ($: E) => `${await $.env.get('HOME')}/.claude/cloud-pet`
 const readFile = async ($: E, name: string) => $.fs.read(`${await dir($)}/${name}`).catch(() => undefined)
 const writeFile = async ($: E, name: string, text: string) => $.fs.write(`${await dir($)}/${name}`, text).catch(() => undefined)
-const sessionName = async ($: E) => title || (await $.session.cwd()).split('/').pop()
+const folder = async ($: E) => (await $.session.cwd()).split('/').pop()
 
 function current(): { mood: Mood; detail: string } {
   const wait = [...waiting.values()].pop()
@@ -132,7 +110,7 @@ async function setStatus($: E, change?: typeof main) {
 async function publish($: E, ended?: 'ended') {
   const sessionId = await $.session.id()
   const path = `${await dir($)}/sessions/${sessionId}.json`
-  const name = await sessionName($)
+  const name = await folder($)
   const { mood, detail } = current()
   await $.fs.write(path, JSON.stringify({ sessionId, title: name, mood: ended ?? mood, line: LINE[mood], detail, changedAt, heartbeatAt: Date.now() })).catch(() => undefined)
 }
@@ -141,12 +119,6 @@ async function setPrefs($: E, change: Partial<Prefs>, isSaved = true) {
   const saved = await readFile($, 'prefs.json').then(text => JSON.parse(text ?? '{}')).catch(() => ({}))
   prefs = { ...prefs, ...saved, ...change }
   if (isSaved) await writeFile($, 'prefs.json', JSON.stringify(prefs))
-}
-
-async function notify($: E, what: string, body: string) {
-  await setPrefs($, {}, false)
-  const script = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"\nend run'
-  if (!prefs.isMuted) await $.process.run(['osascript', '-e', script, '--', `${prefs.name} ${what} · ${await sessionName($)}`, body]).catch(() => undefined)
 }
 
 async function launch($: E) {
@@ -170,7 +142,6 @@ function activity(call: Call) {
 }
 
 const label = (tool: string) => (tool.startsWith('mcp__') ? tool.split('__').slice(2).join(' ').replace(/_/g, ' ') : tool)
-const summary = (answer: string) => clip(answer.replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`#>|]/g, ''), 140)
 
 function clip(text: string, max = 80) {
   const flat = text.replace(/\s+/g, ' ').trim()

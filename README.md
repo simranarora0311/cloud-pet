@@ -2,9 +2,8 @@
 
 A pet for Claude Code that floats above your apps, shows what Claude is doing, and tells you when it is done or needs you.
 
-- Floats on every desktop and over full-screen apps. Hover over it to see what Claude is doing, drag it anywhere, click it to open Claude, right-click it to mute or hide it.
+- Floats on every desktop and over full-screen apps. Hover over it to see what Claude is doing, drag it anywhere, click it to open Claude, right-click it to hide it.
 - Keeps a finished session marked done until you click it or switch to Claude.
-- Sends a macOS notification when Claude finishes, asks you a question, or needs your permission.
 
 ## Install
 
@@ -28,4 +27,4 @@ Needs macOS and the Xcode command line tools (`xcode-select --install`): the flo
 
 ## Use
 
-`/pet` shows or hides Cloud. `/pet mute` and `/pet unmute` turn notifications off and on. `/pet name <name>` renames it.
+`/pet` shows or hides Cloud. `/pet name <name>` renames it.

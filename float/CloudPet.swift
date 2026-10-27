@@ -218,15 +218,13 @@ final class Cloud: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
   func menu(_ event: NSEvent, in view: NSView) {
     let menu = NSMenu()
-    let muted = prefs["isMuted"] as? Bool == true
-    for (title, action) in [("Open Claude", #selector(openClaude)), (muted ? "Unmute notifications" : "Mute notifications", #selector(mute)), ("Hide (/pet brings it back)", #selector(hide))] {
+    for (title, action) in [("Open Claude", #selector(openClaude)), ("Hide (/pet brings it back)", #selector(hide))] {
       menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
     }
     NSMenu.popUpContextMenu(menu, with: event, for: view)
   }
 
   @objc func openClaude() { clicked() }
-  @objc func mute() { save("isMuted", prefs["isMuted"] as? Bool != true) }
   @objc func hide() { save("isHidden", true) }
 
   func save(_ key: String, _ value: Bool) {
