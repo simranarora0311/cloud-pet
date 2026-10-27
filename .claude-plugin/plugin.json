@@ -1,0 +1,6 @@
+{
+  "name": "cloud-pet",
+  "version": "1.0.0",
+  "description": "Cloud, a pet that floats above your apps, shows what Claude is doing and tells you when it is done or needs you.",
+  "types": "./types/index.d.ts"
+}

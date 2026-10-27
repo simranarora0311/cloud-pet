@@ -1,0 +1,5 @@
+{
+  "name": "cloud-pet",
+  "owner": { "name": "simranarora0311" },
+  "plugins": [{ "name": "cloud-pet", "source": "./" }]
+}
