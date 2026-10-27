@@ -2,12 +2,14 @@ import AppKit
 import WebKit
 
 let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/cloud-pet")
+let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
 let claude = "com.anthropic.claudefordesktop"
 let size = NSSize(width: 64, height: 72)
 let wide: CGFloat = 310
 
 struct Session: Decodable {
-  let sessionId, project, mood, line, detail: String
+  let sessionId, mood, line, detail: String
+  let title: String?
   let changedAt, heartbeatAt: Double
 }
 
@@ -66,6 +68,10 @@ final class Cloud: NSObject, NSApplicationDelegate, WKNavigationDelegate {
   var pageDate: Date?
   var isHovering = false
   var isDragging = false
+  var titles: [String: String] = [:]
+  var transcripts: [String: URL] = [:]
+  var offsets: [String: UInt64] = [:]
+  var titlesAt = Date.distantPast
 
   var anchor: NSPoint {
     get {
@@ -123,6 +129,7 @@ final class Cloud: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     let now = Date().timeIntervalSince1970 * 1000
     let files = (try? FileManager.default.contentsOfDirectory(at: home.appendingPathComponent("sessions"), includingPropertiesForKeys: nil)) ?? []
     let live = files.compactMap { try? JSONDecoder().decode(Session.self, from: Data(contentsOf: $0)) }.filter { $0.mood != "ended" && now - $0.heartbeatAt < 180_000 }
+    refreshTitles(live)
     func rank(_ s: Session) -> Int {
       switch s.mood {
       case "waiting": return 3
@@ -136,13 +143,31 @@ final class Cloud: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     let quiet = live.isEmpty ? "No session is reporting to Cloud" : "\(live.count) session\(live.count == 1 ? "" : "s") open, all quiet"
     let mood = top?.mood ?? "sleeping"
     let title = "\(prefs["name"] as? String ?? "Cloud") · \(top?.line ?? "Napping")"
-    state = ["mood": mood, "title": title, "sub": top.map { "\($0.project): \($0.detail)" + (busy > 1 ? " · \(busy - 1) more busy" : "") } ?? quiet]
+    state = ["mood": mood, "title": title, "sub": top.map { "\(titles[$0.sessionId] ?? $0.title ?? "A session"): \($0.detail)" + (busy > 1 ? " · \(busy - 1) more busy" : "") } ?? quiet]
     let isOpen = !NSRunningApplication.runningApplications(withBundleIdentifier: claude).isEmpty
     idleSince = isOpen || !live.isEmpty ? nil : idleSince ?? Date()
     if let idleSince, Date().timeIntervalSince(idleSince) > 60 { NSApp.terminate(nil) }
     let shows = prefs["isHidden"] as? Bool != true && idleSince == nil
     if shows != panel.isVisible { shows ? panel.orderFrontRegardless() : panel.orderOut(nil) }
     layout()
+  }
+
+  func refreshTitles(_ sessions: [Session]) {
+    guard Date().timeIntervalSince(titlesAt) > 5 else { return }
+    titlesAt = Date()
+    for session in sessions {
+      let listed = { ((try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []).map { $0.appendingPathComponent("\(session.sessionId).jsonl") } }
+      guard let url = transcripts[session.sessionId] ?? listed().first(where: { FileManager.default.fileExists(atPath: $0.path) }), let file = try? FileHandle(forReadingFrom: url) else { continue }
+      transcripts[session.sessionId] = url
+      let end = (try? file.seekToEnd()) ?? 0
+      let from = offsets[session.sessionId].flatMap { $0 <= end ? $0 : nil } ?? 0
+      try? file.seek(toOffset: from)
+      let data = (try? file.readToEnd()) ?? Data()
+      try? file.close()
+      offsets[session.sessionId] = from + UInt64(data.lastIndex(of: 10).map { $0 - data.startIndex + 1 } ?? 0)
+      let text = String(decoding: data, as: UTF8.self)
+      if let raw = text.matches(of: #/"customTitle":("(?:[^"\\]|\\.)*")/#).last?.1, let title = try? JSONDecoder().decode(String.self, from: Data(raw.utf8)) { titles[session.sessionId] = title }
+    }
   }
 
   func layout() {

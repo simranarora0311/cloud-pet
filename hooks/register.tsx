@@ -11,6 +11,7 @@ let main: { mood: Mood; detail: string } = { mood: 'sleeping', detail: 'Send a p
 let prefs: Prefs = { isHidden: false, isMuted: false, name: 'Cloud' }
 let changedAt = 0
 let shown = ''
+let title = ''
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -20,6 +21,16 @@ export const register: Register = on => {
     await publish($)
     await launch($)
     $.clock.every(60_000, () => void publish($))
+    return next(e)
+  })
+
+  on('classic.SessionStart', async ($, e, next) => {
+    title = e.session_title ?? (e.source === 'clear' ? '' : title)
+    return next(e)
+  })
+
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    title = e.session_title ?? title
     return next(e)
   })
 
@@ -104,7 +115,7 @@ export const register: Register = on => {
 const dir = async ($: E) => `${await $.env.get('HOME')}/.claude/cloud-pet`
 const readFile = async ($: E, name: string) => $.fs.read(`${await dir($)}/${name}`).catch(() => undefined)
 const writeFile = async ($: E, name: string, text: string) => $.fs.write(`${await dir($)}/${name}`, text).catch(() => undefined)
-const project = async ($: E) => (await $.session.cwd()).split('/').pop()
+const sessionName = async ($: E) => title || (await $.session.cwd()).split('/').pop()
 
 function current(): { mood: Mood; detail: string } {
   const wait = [...waiting.values()].pop()
@@ -121,9 +132,9 @@ async function setStatus($: E, change?: typeof main) {
 async function publish($: E, ended?: 'ended') {
   const sessionId = await $.session.id()
   const path = `${await dir($)}/sessions/${sessionId}.json`
-  const where = await project($)
+  const name = await sessionName($)
   const { mood, detail } = current()
-  await $.fs.write(path, JSON.stringify({ sessionId, project: where, mood: ended ?? mood, line: LINE[mood], detail, changedAt, heartbeatAt: Date.now() })).catch(() => undefined)
+  await $.fs.write(path, JSON.stringify({ sessionId, title: name, mood: ended ?? mood, line: LINE[mood], detail, changedAt, heartbeatAt: Date.now() })).catch(() => undefined)
 }
 
 async function setPrefs($: E, change: Partial<Prefs>, isSaved = true) {
@@ -135,7 +146,7 @@ async function setPrefs($: E, change: Partial<Prefs>, isSaved = true) {
 async function notify($: E, what: string, body: string) {
   await setPrefs($, {}, false)
   const script = 'on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv) sound name "Glass"\nend run'
-  if (!prefs.isMuted) await $.process.run(['osascript', '-e', script, '--', `${prefs.name} ${what} · ${await project($)}`, body]).catch(() => undefined)
+  if (!prefs.isMuted) await $.process.run(['osascript', '-e', script, '--', `${prefs.name} ${what} · ${await sessionName($)}`, body]).catch(() => undefined)
 }
 
 async function launch($: E) {
